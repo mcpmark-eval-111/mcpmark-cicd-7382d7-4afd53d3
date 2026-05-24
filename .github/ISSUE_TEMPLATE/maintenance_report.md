@@ -1,24 +1,22 @@
 ---
 name: Maintenance report
-about: Request maintenance, cleanup, refactoring, dependency updates, or housekeeping
+about: Request maintenance, cleanup, refactoring, or housekeeping work
 title: "Maintenance: "
-labels: ""
+labels: maintenance, needs-triage
 assignees: ""
 ---
 
 ## Maintenance Summary
-<!-- Describe the cleanup, refactor, dependency update, or housekeeping task. -->
+Describe the maintenance work that should be completed.
 
-## Affected Areas
-<!-- List packages, files, services, or workflows that may be touched. -->
+## Scope
+List the files, modules, dependencies, or workflows affected.
 
-## Rationale
-<!-- Explain why this maintenance work is needed now. -->
+## Motivation
+Explain why this maintenance is needed now.
 
 ## Validation Plan
-- [ ] Tests pass locally
-- [ ] Linting passes
-- [ ] Documentation or changelog updated if needed
+Describe how maintainers can confirm the maintenance work is complete and safe.
 
-## Risk / Rollback
-<!-- Note any risk and how to roll back safely. -->
+## Additional Context
+Add related issues, logs, or notes.
