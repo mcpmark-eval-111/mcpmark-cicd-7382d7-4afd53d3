@@ -15,6 +15,7 @@ concurrency:
 jobs:
   issue-triage:
     name: Issue triage
+    if: ${{ github.event.issue.pull_request == null }}
     runs-on: ubuntu-latest
     outputs:
       is_epic: ${{ steps.triage.outputs.is_epic }}
@@ -26,7 +27,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const octokit = github;
             const { owner, repo } = context.repo;
             const issueNumber = context.payload.issue.number;
             const issue = context.payload.issue;
@@ -52,7 +52,7 @@ jobs:
 
             async function ensureLabel(label) {
               try {
-                await octokit.rest.issues.updateLabel({
+                await github.rest.issues.updateLabel({
                   owner,
                   repo,
                   name: label.name,
@@ -62,24 +62,32 @@ jobs:
                 });
               } catch (error) {
                 if (error.status === 404) {
-                  await octokit.rest.issues.createLabel({
-                    owner,
-                    repo,
-                    name: label.name,
-                    color: label.color,
-                    description: label.description
-                  });
+                  try {
+                    await github.rest.issues.createLabel({
+                      owner,
+                      repo,
+                      name: label.name,
+                      color: label.color,
+                      description: label.description
+                    });
+                  } catch (createError) {
+                    if (createError.status === 422) {
+                      core.warning(`Label ${label.name} already exists after a concurrent run; continuing.`);
+                    } else {
+                      core.warning(`Could not create label ${label.name}: ${createError.message}`);
+                    }
+                  }
                 } else {
                   core.warning(`Could not ensure label ${label.name}: ${error.message}`);
                 }
               }
             }
 
-            for (const label of managedLabels) {
-              await ensureLabel(label);
+            for (const managedLabel of managedLabels) {
+              await ensureLabel(managedLabel);
             }
 
-            const { data: currentIssue } = await octokit.rest.issues.get({
+            const { data: currentIssue } = await github.rest.issues.get({
               owner,
               repo,
               issue_number: issueNumber
@@ -88,56 +96,76 @@ jobs:
               currentIssue.labels.map((label) => (typeof label === 'string' ? label : label.name))
             );
 
-            const labelsToAdd = [];
-            if (!isSubtask) {
-              if (titleLower.includes('bug')) {
-                labelsToAdd.push('bug');
-              }
-              if (titleLower.includes('epic')) {
-                labelsToAdd.push('epic');
-              }
-              if (titleLower.includes('maintenance')) {
-                labelsToAdd.push('maintenance');
-              }
-
-              const priorityRules = [
-                { label: 'priority-critical', keywords: ['critical', 'urgent', 'production', 'outage'] },
-                { label: 'priority-high', keywords: ['important', 'high', 'blocking'] },
-                { label: 'priority-medium', keywords: ['medium', 'normal'] },
-                { label: 'priority-low', keywords: ['low', 'nice-to-have', 'minor'] }
-              ];
-              let priorityLabel = 'priority-medium';
-              for (const rule of priorityRules) {
-                if (rule.keywords.some((keyword) => combinedText.includes(keyword))) {
-                  priorityLabel = rule.label;
-                  break;
-                }
-              }
-              labelsToAdd.push(priorityLabel);
-
-              if (context.payload.action === 'opened' && !existingLabels.has('needs-review')) {
-                labelsToAdd.push('needs-triage');
-              }
-
-              const uniqueLabels = [...new Set(labelsToAdd)].filter((label) => !existingLabels.has(label));
-              if (uniqueLabels.length > 0) {
-                await octokit.rest.issues.addLabels({
-                  owner,
-                  repo,
-                  issue_number: issueNumber,
-                  labels: uniqueLabels
-                });
-              }
-
-              core.setOutput('priority_label', priorityLabel);
-              core.setOutput('is_epic', titleLower.includes('epic') ? 'true' : 'false');
-            } else {
+            if (isSubtask) {
               core.info('Skipping normal triage for generated sub-task issue.');
               core.setOutput('priority_label', '');
               core.setOutput('is_epic', 'false');
+              core.setOutput('is_subtask', 'true');
+              return;
             }
 
-            core.setOutput('is_subtask', isSubtask ? 'true' : 'false');
+            const labelsToAdd = [];
+            if (titleLower.includes('bug')) {
+              labelsToAdd.push('bug');
+            }
+            if (titleLower.includes('epic')) {
+              labelsToAdd.push('epic');
+            }
+            if (titleLower.includes('maintenance')) {
+              labelsToAdd.push('maintenance');
+            }
+
+            const priorityRules = [
+              { label: 'priority-critical', keywords: ['critical', 'urgent', 'production', 'outage'] },
+              { label: 'priority-high', keywords: ['important', 'high', 'blocking'] },
+              { label: 'priority-medium', keywords: ['medium', 'normal'] },
+              { label: 'priority-low', keywords: ['low', 'nice-to-have', 'minor'] }
+            ];
+            let priorityLabel = 'priority-medium';
+            for (const rule of priorityRules) {
+              if (rule.keywords.some((keyword) => combinedText.includes(keyword))) {
+                priorityLabel = rule.label;
+                break;
+              }
+            }
+            labelsToAdd.push(priorityLabel);
+
+            const priorityLabels = priorityRules.map((rule) => rule.label);
+            for (const stalePriority of priorityLabels.filter((label) => label !== priorityLabel)) {
+              if (existingLabels.has(stalePriority)) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    name: stalePriority
+                  });
+                  existingLabels.delete(stalePriority);
+                } catch (error) {
+                  if (error.status !== 404) {
+                    core.warning(`Could not remove stale priority label ${stalePriority}: ${error.message}`);
+                  }
+                }
+              }
+            }
+
+            if (!existingLabels.has('needs-review') && !existingLabels.has('needs-triage')) {
+              labelsToAdd.push('needs-triage');
+            }
+
+            const uniqueLabels = [...new Set(labelsToAdd)].filter((label) => !existingLabels.has(label));
+            if (uniqueLabels.length > 0) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: issueNumber,
+                labels: uniqueLabels
+              });
+            }
+
+            core.setOutput('priority_label', priorityLabel);
+            core.setOutput('is_epic', titleLower.includes('epic') ? 'true' : 'false');
+            core.setOutput('is_subtask', 'false');
 
   task-breakdown:
     name: Epic task breakdown
@@ -149,7 +177,6 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const octokit = github;
             const { owner, repo } = context.repo;
             const parentNumber = context.payload.issue.number;
             const originalTitle = context.payload.issue.title || '';
@@ -160,13 +187,13 @@ jobs:
               'Testing and Documentation'
             ];
 
-            const { data: parentIssue } = await octokit.rest.issues.get({
+            const { data: parentIssue } = await github.rest.issues.get({
               owner,
               repo,
               issue_number: parentNumber
             });
 
-            const existingIssues = await octokit.paginate(octokit.rest.issues.listForRepo, {
+            const existingIssues = await github.paginate(github.rest.issues.listForRepo, {
               owner,
               repo,
               state: 'all',
@@ -178,33 +205,60 @@ jobs:
               const taskNumber = index + 1;
               const taskName = taskNames[index];
               const subIssueTitle = `[SUBTASK] ${originalTitle} - Task ${taskNumber}: ${taskName}`;
-              const existingSubIssue = existingIssues.find(
+              let subIssue = existingIssues.find(
                 (candidate) => !candidate.pull_request && candidate.title === subIssueTitle
               );
 
-              if (existingSubIssue) {
-                subIssues.push(existingSubIssue);
-                continue;
+              if (!subIssue) {
+                const subIssueBody = [
+                  `This sub-task is part of the epic issue #${parentNumber}.`,
+                  '',
+                  `Related to #${parentNumber}`,
+                  '',
+                  `Task ${taskNumber}: ${taskName}`,
+                  '',
+                  'Please complete this work as part of the parent epic checklist.'
+                ].join('\n');
+
+                const { data: createdSubIssue } = await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title: subIssueTitle,
+                  body: subIssueBody,
+                  labels: ['enhancement', 'needs-review']
+                });
+                subIssue = createdSubIssue;
+                existingIssues.push(createdSubIssue);
+              } else {
+                try {
+                  await github.rest.issues.addLabels({
+                    owner,
+                    repo,
+                    issue_number: subIssue.number,
+                    labels: ['enhancement', 'needs-review']
+                  });
+                } catch (error) {
+                  core.warning(`Could not ensure labels on sub-issue #${subIssue.number}: ${error.message}`);
+                }
+
+                const relatedLine = `Related to #${parentNumber}`;
+                if (!(subIssue.body || '').includes(relatedLine)) {
+                  const updatedSubIssueBody = [relatedLine, '', subIssue.body || ''].join('\n').trim();
+                  try {
+                    const { data: updatedSubIssue } = await github.rest.issues.update({
+                      owner,
+                      repo,
+                      issue_number: subIssue.number,
+                      body: updatedSubIssueBody
+                    });
+                    subIssue = updatedSubIssue;
+                  } catch (error) {
+                    core.warning(`Could not update sub-issue #${subIssue.number} body: ${error.message}`);
+                  }
+                }
               }
 
-              const subIssueBody = [
-                `This sub-task is part of the epic issue #${parentNumber}.`,
-                '',
-                `Related to #${parentNumber}`,
-                '',
-                `Task ${taskNumber}: ${taskName}`,
-                '',
-                'Please complete this work as part of the parent epic checklist.'
-              ].join('\n');
-
-              const { data: createdSubIssue } = await octokit.rest.issues.create({
-                owner,
-                repo,
-                title: subIssueTitle,
-                body: subIssueBody,
-                labels: ['enhancement', 'needs-review']
-              });
-              subIssues.push(createdSubIssue);
+              subIssues.push(subIssue);
             }
 
             subIssues.sort((left, right) => {
@@ -222,12 +276,12 @@ jobs:
             ].join('\n');
 
             const parentBody = parentIssue.body || '';
-            const bodyWithoutOldChecklist = parentBody.replace(/\n*## Epic Tasks[\s\S]*$/m, '').trimEnd();
-            const updatedBody = bodyWithoutOldChecklist
-              ? `${bodyWithoutOldChecklist}\n\n${checklist}`
-              : checklist;
+            const epicTasksPattern = /(?:\n\n)?## Epic Tasks[\s\S]*?(?=\n## |$)/m;
+            const updatedBody = epicTasksPattern.test(parentBody)
+              ? parentBody.replace(epicTasksPattern, `\n\n${checklist}`).trimStart()
+              : `${parentBody.trim()}${parentBody.trim() ? '\n\n' : ''}${checklist}`;
 
-            await octokit.rest.issues.update({
+            await github.rest.issues.update({
               owner,
               repo,
               issue_number: parentNumber,
@@ -244,12 +298,11 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const octokit = github;
             const { owner, repo } = context.repo;
             const issueNumber = context.payload.issue.number;
             const issueAuthor = context.payload.issue.user.login;
 
-            const { data: currentIssue } = await octokit.rest.issues.get({
+            const { data: currentIssue } = await github.rest.issues.get({
               owner,
               repo,
               issue_number: issueNumber
@@ -260,16 +313,17 @@ jobs:
 
             async function isFirstIssueInRepository(author) {
               try {
-                const authoredIssues = await octokit.paginate(octokit.rest.issues.listForRepo, {
+                const authoredItems = await github.paginate(github.rest.issues.listForRepo, {
                   owner,
                   repo,
                   state: 'all',
                   creator: author,
                   per_page: 100
                 });
-                return !authoredIssues.some(
-                  (candidate) => !candidate.pull_request && candidate.number !== issueNumber
-                );
+                const authoredIssues = authoredItems
+                  .filter((candidate) => !candidate.pull_request && candidate.user?.login === author)
+                  .sort((left, right) => left.number - right.number);
+                return authoredIssues.length === 0 || authoredIssues[0].number === issueNumber;
               } catch (error) {
                 core.warning(`Could not determine first-time contributor status: ${error.message}`);
                 return false;
@@ -278,23 +332,46 @@ jobs:
 
             async function ensureMilestone(title) {
               try {
-                const milestones = await octokit.paginate(octokit.rest.issues.listMilestones, {
+                let milestones = await github.paginate(github.rest.issues.listMilestones, {
                   owner,
                   repo,
                   state: 'all',
                   per_page: 100
                 });
-                const existingMilestone = milestones.find((milestone) => milestone.title === title);
+                let existingMilestone = milestones.find((milestone) => milestone.title === title);
                 if (existingMilestone) {
+                  if (existingMilestone.state !== 'open') {
+                    const { data: reopenedMilestone } = await github.rest.issues.updateMilestone({
+                      owner,
+                      repo,
+                      milestone_number: existingMilestone.number,
+                      state: 'open'
+                    });
+                    existingMilestone = reopenedMilestone;
+                  }
                   return existingMilestone;
                 }
-                const { data: createdMilestone } = await octokit.rest.issues.createMilestone({
-                  owner,
-                  repo,
-                  title,
-                  description: 'Initial release milestone for high-priority work'
-                });
-                return createdMilestone;
+
+                try {
+                  const { data: createdMilestone } = await github.rest.issues.createMilestone({
+                    owner,
+                    repo,
+                    title,
+                    description: 'Initial release milestone for high-priority work'
+                  });
+                  return createdMilestone;
+                } catch (createError) {
+                  if (createError.status === 422) {
+                    milestones = await github.paginate(github.rest.issues.listMilestones, {
+                      owner,
+                      repo,
+                      state: 'all',
+                      per_page: 100
+                    });
+                    return milestones.find((milestone) => milestone.title === title) || null;
+                  }
+                  throw createError;
+                }
               } catch (error) {
                 core.warning(`Could not ensure milestone ${title}: ${error.message}`);
                 return null;
@@ -305,7 +382,7 @@ jobs:
             const firstIssue = await isFirstIssueInRepository(issueAuthor);
             if (firstIssue) {
               if (!labelNames.has('first-time-contributor')) {
-                await octokit.rest.issues.addLabels({
+                await github.rest.issues.addLabels({
                   owner,
                   repo,
                   issue_number: issueNumber,
@@ -334,7 +411,7 @@ jobs:
               );
             }
 
-            const comments = await octokit.paginate(octokit.rest.issues.listComments, {
+            const comments = await github.paginate(github.rest.issues.listComments, {
               owner,
               repo,
               issue_number: issueNumber,
@@ -345,7 +422,7 @@ jobs:
             );
 
             if (!alreadyResponded && commentSections.length > 1) {
-              await octokit.rest.issues.createComment({
+              await github.rest.issues.createComment({
                 owner,
                 repo,
                 issue_number: issueNumber,
@@ -356,7 +433,7 @@ jobs:
             if (labelNames.has('priority-high') || labelNames.has('priority-critical')) {
               const milestone = await ensureMilestone('v1.0.0');
               if (milestone) {
-                await octokit.rest.issues.update({
+                await github.rest.issues.update({
                   owner,
                   repo,
                   issue_number: issueNumber,
@@ -366,7 +443,7 @@ jobs:
             }
 
             if (!labelNames.has('needs-review')) {
-              await octokit.rest.issues.addLabels({
+              await github.rest.issues.addLabels({
                 owner,
                 repo,
                 issue_number: issueNumber,
@@ -377,7 +454,7 @@ jobs:
 
             if (labelNames.has('needs-triage')) {
               try {
-                await octokit.rest.issues.removeLabel({
+                await github.rest.issues.removeLabel({
                   owner,
                   repo,
                   issue_number: issueNumber,
