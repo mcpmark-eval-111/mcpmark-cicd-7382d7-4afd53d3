@@ -1,30 +1,29 @@
 ---
 name: Bug report
-about: Report something that is not working correctly
+about: Report a reproducible problem or regression
 title: "Bug: "
-labels: bug, needs-triage
+labels: ""
 assignees: ""
 ---
 
 ## Bug Description
-Describe the problem clearly and concisely.
+<!-- Clearly describe what is not working. -->
 
 ## Steps to Reproduce
-1. Go to ...
-2. Click on ...
-3. Observe ...
+1.
+2.
+3.
 
 ## Expected Behavior
-What did you expect to happen?
+<!-- What did you expect to happen? -->
 
 ## Actual Behavior
-What actually happened?
+<!-- What happened instead? Include logs, screenshots, or stack traces if possible. -->
 
 ## Environment
 - Node.js version:
 - npm version:
-- Browser/client:
 - Operating system:
 
-## Additional Context
-Add logs, screenshots, or other details that may help diagnose the bug.
+## Impact / Priority
+<!-- Optional: include words such as critical, urgent, high, blocking, medium, normal, low, nice-to-have, or minor to help the automation assign priority. -->

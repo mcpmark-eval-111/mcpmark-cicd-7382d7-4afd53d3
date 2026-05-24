@@ -1,27 +1,25 @@
 ---
-name: Feature request
-about: Propose a new feature, enhancement, or epic
+name: Feature request or epic
+author: Product and engineering contributors
+about: Propose a new feature, enhancement, or epic that may need task breakdown
 title: "Epic: "
-labels: enhancement, needs-triage
+labels: ""
 assignees: ""
 ---
 
 ## Feature Summary
-Describe the feature or enhancement you would like to see.
+<!-- Describe the feature or epic. Use "Epic" in the title for large work that should be broken into sub-issues. -->
 
-## Problem or Opportunity
-What problem does this solve, or what opportunity does it create?
+## Problem / Opportunity
+<!-- What user or business problem does this solve? -->
 
 ## Proposed Solution
-Describe the desired behavior or implementation approach.
+<!-- Share the desired behavior, interface, or technical direction. -->
 
-## Alternatives Considered
-List any alternative solutions or workarounds you considered.
+## Acceptance Criteria
+- [ ]
+- [ ]
+- [ ]
 
-## Success Criteria
-- [ ] Requirement or outcome 1
-- [ ] Requirement or outcome 2
-- [ ] Requirement or outcome 3
-
-## Additional Context
-Add mockups, links, or any other helpful context.
+## Priority Context
+<!-- Optional: include important, high, blocking, critical, urgent, medium, normal, low, nice-to-have, or minor to guide prioritization. -->
